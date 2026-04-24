@@ -2,4 +2,5 @@
 **/.DS_Store
 **/dist
 **/pnpm-debug.log
+**/references
 lerna-debug.log
