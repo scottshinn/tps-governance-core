@@ -1,0 +1,29 @@
+{
+  "name": "governance-core",
+  "version": "0.0.1",
+  "author": "Scott Shinn <sshinn@gmail.com>",
+  "description": "governance-core",
+  "homepage": "https://github.com/scottshinn/tps-governance-core",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "directory": "dist"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/scottshinn/tps-governance-core"
+  },
+  "bugs": {
+    "url": "https://github.com/scottshinn/tps-governance-core/issues"
+  },
+  "scripts": {
+    "lint": "eslint . --fix",
+    "test": "jest",
+    "test:watch": "jest --watchAll"
+  },
+  "keywords": [],
+  "devDependencies": {
+    "pgsql-test": "^4.7.6",
+    "makage": "^0.3.0"
+  }
+}

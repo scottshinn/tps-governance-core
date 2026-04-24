@@ -1,4 +1,4 @@
-# tps-governance-core
+# governance-core
 
 <p align="center" width="100%">
   <img height="250" src="https://raw.githubusercontent.com/constructive-io/constructive/refs/heads/main/assets/outline-logo.svg" />
@@ -8,42 +8,26 @@
   <a href="https://github.com/scottshinn/tps-governance-core/actions/workflows/ci.yml">
     <img height="20" src="https://github.com/scottshinn/tps-governance-core/actions/workflows/ci.yml/badge.svg" />
   </a>
+   <a href="https://www.npmjs.com/package/governance-core"><img height="20" src="https://img.shields.io/github/package-json/v/scottshinn/tps-governance-core?filename=packages%2Fgovernance-core%2Fpackage.json"/></a>
 </p>
 
+## Developing
 
-## Getting Started
-
-This workspace was generated with `pgpm init workspace`. For a complete guide on developing with pgpm workspaces, see [Workspaces: Organize Postgres](https://constructive.io/learn/modular-postgres/workspaces-organize-postgres).
-
-### Quick Start
+This module was generated with `pgpm init`. For a complete guide on creating and testing database modules, see [Creating Your First Module](https://constructive.io/learn/modular-postgres/creating-first-module).
 
 ```sh
 # Install dependencies
 pnpm install
 
-# Start PostgreSQL (requires Docker)
-pgpm docker start
+# Run tests
+pnpm test
 
-# Load environment variables
-eval "$(pgpm env)"
-
-# Create a module
-pgpm init
-
-# Navigate to your module and run tests
-cd packages/your-module
+# Run tests in watch mode
 pnpm test:watch
+
+# Deploy to a database
+pgpm deploy --database your_db --createdb --yes
 ```
-
-### Prerequisites
-
-- Node.js 20+
-- pnpm
-- Docker
-- PostgreSQL client tools (`psql`)
-- pgpm (`npm install -g pgpm`)
-
-See [Prerequisites](https://constructive.io/learn/quickstart/prerequisites) for detailed setup instructions.
 
 ## Credits
 

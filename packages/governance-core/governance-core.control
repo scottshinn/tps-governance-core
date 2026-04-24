@@ -1,0 +1,7 @@
+# governance-core extension
+comment = 'governance-core extension'
+default_version = '0.0.1'
+module_pathname = '$libdir/governance-core'
+requires = 'pgcrypto,uuid-ossp,citext,pg_trgm,btree_gist,plpgsql'
+relocatable = false
+superuser = false
