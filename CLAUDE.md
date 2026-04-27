@@ -371,29 +371,31 @@ When in doubt about a design decision, prefer:
 ## Build Status
 
 ### Done
-- [x] All 40 deploy SQL files written (`schemas/`, `tables/`, `functions/`, `views/`, `policies/`, `indexes/`)
-- [x] All 40 verify scripts written (mirror deploy structure; use `verify_*` helpers)
+- [x] All 42 deploy SQL files written (`schemas/`, `tables/`, `functions/`, `views/`, `policies/`, `indexes/`)
+- [x] All 42 verify scripts written (mirror deploy structure; use `verify_*` helpers)
 - [x] All 40 revert scripts written (cleanly undo each deploy)
 - [x] `pgpm.plan` — full 40-entry DAG with correct dependency ordering
 - [x] `governance_private.tg_audit_log()` SECURITY DEFINER trigger function
 - [x] `attach_audit_triggers()` — attaches trigger to all 17 mutable tables
-- [x] Five governance intelligence functions: `effective_permissions`, `sod_check`, `blast_radius`, `permission_overlap`, `coverage_gaps`
-- [x] Five views: `agent_topology`, `agent_summary`, `resource_exposure`, `sod_violations`, `ungoverned_resources`
+- [x] Six governance intelligence functions: `effective_permissions`, `sod_check`, `blast_radius`, `permission_overlap`, `coverage_gaps`, `agent_tool_inventory`
+- [x] Six views: `agent_topology`, `agent_summary`, `agent_tool_summary`, `resource_exposure`, `sod_violations`, `ungoverned_resources`
 - [x] RLS on `agents` and `audit_log` — four policies each, controlled by `tps.role` session variable
 - [x] Performance indexes including partial indexes for hot-path governance queries
 - [x] Seed data: 4 compliance frameworks, 15 requirements, 5 built-in roles, 4 SoD constraint templates
-- [x] 8 test files covering audit trail, role hierarchy, SoD violations, blast radius, effective permissions, agents, schema integrity
+- [x] 12 test files covering audit trail, role hierarchy, SoD violations, blast radius, effective permissions, agents, schema integrity, permission_overlap, coverage_gaps, rls_policies, permissions
+- [x] `governance.agent_tool_inventory(agent_id)` function — tool-centric governance intelligence for KYA Layer 3
+- [x] `governance.agent_tool_summary` view — dashboard companion showing tool counts per active/approved agent
 - [x] `docs/ARCHITECTURE.md`, `docs/PGPM-CONVENTIONS.md`, `docs/SANNA-PROTOCOL-NOTES.md`, `docs/DATA-MODEL-REFERENCE.md`
-- [x] `DECISIONS.md` — 24 decisions covering every significant design choice
+- [x] `DECISIONS.md` — 25 decisions covering every significant design choice
 
 ### Pending (not yet run against a live database)
 - [ ] `pgpm deploy --createdb --database governance_dev` — deploy validation
-- [ ] `pgpm verify --database governance_dev` — all 40 verify scripts pass
+- [ ] `pgpm verify --database governance_dev` — all 42 verify scripts pass
 - [ ] `pnpm test` — all test suites pass against deployed schema
 - [ ] `pgpm revert --database governance_dev` — full revert succeeds cleanly
 
-### Missing tests (not yet written)
-- [ ] `__tests__/permission_overlap.test.ts` — `permission_overlap()` function
-- [ ] `__tests__/coverage_gaps.test.ts` — `coverage_gaps()` / `ungoverned_resources` view
-- [ ] `__tests__/rls_policies.test.ts` — RLS enforcement by `tps.role` value
-- [ ] `__tests__/permissions.test.ts` — permission grant/deny mechanics, expiration
+### Previously missing tests (now written)
+- [x] `__tests__/permission_overlap.test.ts` — `permission_overlap()` function
+- [x] `__tests__/coverage_gaps.test.ts` — `coverage_gaps()` / `ungoverned_resources` view
+- [x] `__tests__/rls_policies.test.ts` — RLS policy configuration and session variable behavior (enforcement requires non-superuser `db` connection or `FORCE ROW LEVEL SECURITY`)
+- [x] `__tests__/permissions.test.ts` — permission grant/deny mechanics, expiration, schema constraints

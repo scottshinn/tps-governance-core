@@ -322,3 +322,16 @@ Application code must set this variable before executing governance queries. Lay
 - Return all grants with grant_type column (chosen)
 
 **Rationale:** Computing net effective access inside the database function would discard information Layer 2 may need — specifically, which role or which depth in the hierarchy created the deny. An audit or SoD check may need to know not just "this action is denied" but "it's denied because Role X at depth 2 has an explicit deny, which conflicts with the allow at depth 0." Returning raw grants with `grant_type` and `role_depth` preserves this lineage. Layer 2's responsibility is to compute the final effective permission set using the deny-overrides-allow rule (D002). This also means `sod_check()` correctly filters to allow-only grants before checking SoD constraints — an agent that has a deny on an action does not effectively hold that permission for SoD purposes.
+
+---
+
+## D025 — agent_tool_inventory as a Separate Function (Not Derived from blast_radius)
+
+**Decision:** Create `agent_tool_inventory()` as an independent function rather than deriving tool data from `blast_radius()`.
+
+**Alternatives considered:**
+- Parse tool data out of `blast_radius()` results (the `access_paths` column contains tool references as `via_tool:<name>` strings, which the caller could re-join against `governance.tools`)
+- Create a view that filters `effective_permissions()` to non-null `tool_id` rows and joins to `tools`
+- Dedicated function with a tool-centric return type (chosen)
+
+**Rationale:** `blast_radius()` is resource-centric — it answers "what resources can this agent reach?" The tool inventory question is tool-centric — "what tools does this agent have, and what can each tool do?" Deriving one from the other forces the caller to reshape the data: `blast_radius()` collapses tool references into an opaque `text[]` of path strings, which the caller would need to parse and re-join. A dedicated function with a tool-oriented return type (metadata, flags, resource count, effective actions, granting role) maps directly to what the KYA Layer 3 hover-over-agent display needs, reducing Layer 2/3 complexity to a single function call. The function reuses `effective_permissions()` internally, so there is no duplicated role-hierarchy logic. Language is `sql` per D017 (read-only, benefits from inlining).

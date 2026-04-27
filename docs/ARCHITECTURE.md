@@ -163,6 +163,7 @@ The five governance intelligence functions live in the database so both the Type
 | `blast_radius(agent_id)` | If this agent is compromised, what can an attacker reach? |
 | `permission_overlap(resource_id)` | Which agents have access to this resource? |
 | `coverage_gaps()` | Which resources have no governance coverage? |
+| `agent_tool_inventory(agent_id)` | Which tools can this agent use, and what can each tool do? |
 
 ---
 
@@ -250,6 +251,17 @@ Returns resources that lack either:
 
 Ordered by sensitivity descending.
 
+### agent_tool_inventory(p_agent_id uuid)
+
+1. Calls `effective_permissions()` and filters to allow grants with a non-null `tool_id`
+2. For each distinct tool, selects the shallowest (most direct) granting role via `DISTINCT ON`
+3. Aggregates effective actions per tool across all permissions that reference the tool
+4. Joins to `governance.tools` for tool metadata and `governance.mcp_servers` for server name
+5. Counts resources per tool via `governance.tool_resources`
+6. Returns one row per tool ordered by name
+
+Designed as the primary data source for the KYA Layer 3 hover-over-agent display. Only allow grants are included; tools blocked exclusively by deny grants are not shown. Uses `LANGUAGE sql` for query planner inlining (D017).
+
 ---
 
 ## Views
@@ -258,6 +270,7 @@ Ordered by sensitivity descending.
 |---|---|
 | `agent_topology` | Recursive hierarchy with depth, ancestor chain, and display path |
 | `agent_summary` | Agent with role count, latest risk score, and review overdue flag |
+| `agent_tool_summary` | Approved/active agents with tool counts, destructive tool count, and tool name list |
 | `resource_exposure` | Resource with data categories, active agent count, and destructive grant flags |
 | `sod_violations` | All current SoD violations across active/approved agents |
 | `ungoverned_resources` | Thin wrapper over `coverage_gaps()` |

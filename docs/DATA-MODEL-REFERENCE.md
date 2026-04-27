@@ -481,6 +481,14 @@ Returns resources missing either active permissions or active resource-scoped ru
 
 ---
 
+### `governance.agent_tool_inventory(p_agent_id uuid)`
+
+**Returns:** `TABLE (tool_id, tool_name, tool_type, mcp_server_id, mcp_server_name, is_destructive, is_idempotent, resource_count, effective_actions, granted_via_role_name, granted_via_role_depth)`
+
+Returns all tools an agent can use, resolved through the role hierarchy. Only allow grants are included — tools blocked exclusively by deny grants are not shown. For each tool: identity and type metadata, destructive/idempotent flags, the count of resources reachable through it, the union of all effective actions granted across permissions referencing the tool, and the name and depth of the most direct granting role (depth 0 = direct assignment). Ordered by tool name. Primary data source for the KYA control plane hover-over-agent display.
+
+---
+
 ### `governance_private.tg_audit_log()`
 
 **Returns:** `TRIGGER`
@@ -509,6 +517,10 @@ Recursive hierarchy view. Columns: `id, name, parent_agent_id, agent_type, lifec
 ### `governance.agent_summary`
 
 Agent with computed metrics: `active_role_count`, `latest_risk_score`, `latest_risk_level`, `review_overdue` (boolean). Intended for dashboards.
+
+### `governance.agent_tool_summary`
+
+Shows all approved/active agents with tool inventory metrics: `agent_id, agent_name, agent_type, lifecycle_state, total_tools, destructive_tools, mcp_servers_used, tool_names (text[])`. Uses `LATERAL` join over `agent_tool_inventory()`. Dashboard companion for the KYA agent list view.
 
 ### `governance.resource_exposure`
 
