@@ -1,8 +1,8 @@
 {
-  "name": "governance-core",
+  "name": "@tpsdev/governance-core",
   "version": "0.0.1",
   "author": "Scott Shinn <sshinn@gmail.com>",
-  "description": "governance-core",
+  "description": "TPS Governance Core — PostgreSQL schema for AI agent governance (pgpm module)",
   "homepage": "https://github.com/scottshinn/tps-governance-core",
   "license": "MIT",
   "publishConfig": {

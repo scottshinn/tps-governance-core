@@ -1,0 +1,53 @@
+{
+  "name": "@tpsdev/governance-engine",
+  "version": "0.0.1",
+  "author": "Scott Shinn <sshinn@gmail.com>",
+  "description": "TPS Governance Engine — typed query, analysis, and intelligence layer for @tpsdev/governance-core",
+  "homepage": "https://github.com/scottshinn/tps-governance-core",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "publishConfig": {
+    "access": "public",
+    "directory": "dist"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/scottshinn/tps-governance-core",
+    "directory": "packages/governance-engine"
+  },
+  "bugs": {
+    "url": "https://github.com/scottshinn/tps-governance-core/issues"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rimraf dist",
+    "lint": "eslint . --fix",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "tps",
+    "governance",
+    "ai-agents",
+    "permissions",
+    "compliance",
+    "sanna"
+  ],
+  "dependencies": {
+    "postgres": "^3.4.4",
+    "yaml": "^2.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "rimraf": "^5.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  },
+  "peerDependencies": {
+    "@tpsdev/governance-core": "workspace:*"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  }
+}

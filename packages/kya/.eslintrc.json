@@ -1,0 +1,10 @@
+{
+  "extends": ["next/core-web-vitals"],
+  "root": true,
+  "rules": {
+    "comma-dangle": "off",
+    "indent": "off",
+    "quotes": "off",
+    "semi": "off"
+  }
+}

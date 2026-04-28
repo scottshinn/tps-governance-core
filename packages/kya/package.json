@@ -1,0 +1,45 @@
+{
+  "name": "@tpsdev/kya",
+  "version": "0.0.1",
+  "private": true,
+  "author": "Scott Shinn <sshinn@gmail.com>",
+  "description": "TPS KYA — visual governance control plane for AI agent deployments (Layer 3)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/scottshinn/tps-governance-core",
+    "directory": "packages/kya"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@tpsdev/governance-engine": "workspace:*",
+    "@tanstack/react-table": "^8.20.5",
+    "date-fns": "^4.1.0",
+    "lucide-react": "^0.460.0",
+    "next": "^15.0.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "yaml": "^2.4.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^20.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "eslint-config-next": "^15.0.3",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  }
+}

@@ -4,7 +4,12 @@
       "Bash(xargs -I{} sh -c 'echo \"=== {} ===\"; cat {}')",
       "Bash(xargs grep *)",
       "Bash(grep -v \"^packages/governance-core$\")",
-      "Bash(psql --version)"
+      "Bash(psql --version)",
+      "Bash(pnpm install *)",
+      "Bash(pnpm -C packages/governance-engine run build)",
+      "Bash(pnpm -C packages/governance-engine run test)",
+      "Bash(pnpm -C packages/kya run typecheck)",
+      "Bash(pnpm -C packages/kya exec next build)"
     ]
   }
 }

@@ -1,401 +1,725 @@
-# CLAUDE.md — TPS Governance Data Model (Layer 1)
+# CLAUDE.md — TPS KYA (Layer 3)
 
 ## Project Identity
 
-**Name:** `@tpsdev/governance-core`
-**Full Name:** TPS — Tool Permission System
-**Tagline:** "Trust. Permissions. Security. — Governance infrastructure for AI agents."
-**Type:** pgpm module — a PostgreSQL package built with the pgpm workflow for modular Postgres development
+**Name:** `@tpsdev/kya`
+**Full Name:** TPS KYA — Know Your Agent
+**Type:** Next.js application — the visual governance control plane for AI agent deployments
 **License:** MIT
 **Author:** Scott Shinn
-**GitHub Org:** tps-dev (or tps-reports-dev — confirm availability)
 **npm Scope:** @tpsdev
 
 ## What This Is
 
-TPS is the governance data layer for AI agents. It models the full permission, access, and compliance surface of AI agent deployments as a normalized PostgreSQL schema. It is designed to answer the question that no existing tool can: *"Across all of my agents, tools, and resources — who can do what, why are they allowed to, and where are the gaps?"*
+TPS KYA is the operator interface for the TPS governance platform. It is a browser-based application styled with a terminal-inspired, information-dense aesthetic. Operators use KYA to see every agent in their deployment, understand what each agent can do, identify governance gaps and violations, review audit history, and explore the full I/O surface of their AI agent infrastructure.
 
-TPS is a three-layer architecture:
-- **Layer 1 — `@tpsdev/governance-core` (this module):** The Postgres schema — tables, relationships, RLS policies, indexes, seed data, and audit infrastructure
-- **Layer 2 — `@tpsdev/governance-engine` (future):** A TypeScript query and analysis engine for overlap detection, segregation of duties validation, risk scoring, and governance intelligence. This is the npm package that depends on the pgpm module.
-- **Layer 3 — TPS KYA (future):** The "Know Your Agent" visual control plane for operators — a terminal-like GUI showing all agents, their permissions, their topology, and the full I/O surface of a deployment
+KYA is Layer 3 of the TPS architecture:
+- **Layer 1 — `@tpsdev/governance-core`:** PostgreSQL schema (deployed, tested)
+- **Layer 2 — `@tpsdev/governance-engine`:** TypeScript governance intelligence library (built, unit tests passing)
+- **Layer 3 — `@tpsdev/kya` (this application):** Visual control plane
 
-The name "TPS" is a backronym for Tool Permission System (or Trust, Permissions, Security). The cultural reference to TPS Reports is intentional — governance documentation that everyone needs but nobody wants to manage manually. TPS automates the TPS reports.
-
-Layer 1 must be designed so that Layers 2 and 3 can be built on top without schema changes. The data model is the foundation — if it's wrong, everything above it breaks.
+KYA has one absolute rule: **every data read and every mutation goes through `TpsClient` from `@tpsdev/governance-engine`.** KYA never touches SQL directly. The engine is the only interface to the database.
 
 ## Required Context
 
-The reference research has been done and is captured in `docs/`. New sessions should read these before writing SQL or making architectural decisions:
+Read the Layer 2 documentation before building:
 
-- `docs/PGPM-CONVENTIONS.md` — patterns from pgpm-modules: deploy/verify/revert format, pgpm.plan syntax, verify helpers, test harness, CLI workflow
-- `docs/SANNA-PROTOCOL-NOTES.md` — Sanna constitution format mapped to TPS equivalents; what TPS does and does not implement; future integration points
-- `docs/ARCHITECTURE.md` — full entity relationship model, design principles, function design, RLS policy matrix
-- `docs/DATA-MODEL-REFERENCE.md` — every table, column, function, view with descriptions
-- `DECISIONS.md` — every design decision with alternatives considered and rationale (D001–D024)
+1. **Layer 2 `docs/API.md`** — every public method on `TpsClient`, input types, return types
+2. **Layer 2 `docs/RULE-CONDITIONS.md`** — the rule condition types and their JSON schemas
+3. **Layer 2 `docs/SANNA-EXPORT.md`** — the Sanna constitution export mapping
+4. **Layer 1 `docs/ARCHITECTURE.md`** — the entity relationship model and design principles
+5. **Layer 1 `docs/DATA-MODEL-REFERENCE.md`** — every table, column, enum, function, view
 
-**Sanna license note:** Sanna is AGPL-3.0. TPS does not copy or fork Sanna. TPS is the authoring and management layer; Sanna is the enforcement and receipt layer. They are complementary.
+If any of these docs are not present, ask the user before proceeding.
 
-## Architecture Principles
+## Tech Stack
 
-### 1. Everything Is Auditable
-Every table that stores mutable governance state MUST have a corresponding audit mechanism. When a role is created, a permission is granted, an agent is registered, or a rule is modified — the previous state, the new state, the actor, the timestamp, and the reason for change must be captured. This is not optional. Regulators and auditors need point-in-time reconstruction of "who could do what, when."
-
-### 2. The Schema Is the Governance Model
-The foreign keys, constraints, and relationships in the schema ARE the governance logic. If an agent can only access resources through tools, and tools are granted through permissions, and permissions flow through roles — then the schema enforces that path. There should be no way to create a "dangling" permission that isn't attached to a role, or a tool grant that bypasses the permission model.
-
-### 3. Resources Are First-Class Citizens
-Resources (databases, tables, API endpoints, webhooks, file stores, MCP servers, external services) must be modeled with enough metadata to enable meaningful governance queries. A resource has a type, a sensitivity classification, a data category, and directionality (read/write/execute). Without rich resource metadata, you can't answer "which agents have access to PII" or "what's our total exposure to financial data."
-
-### 4. Agents Have Topology
-Agents exist in hierarchies. An orchestrator delegates to sub-agents. Sub-agents may spawn further agents. The governance model must capture this tree structure: who reports to whom, who can delegate to whom, and what the span of control is at each level. An agent's effective permissions are the intersection of its own grants and its parent's delegation scope.
-
-### 5. Rules Trace to Requirements
-Every governance rule should be traceable to a compliance requirement, an internal policy, or a risk assessment. "This agent cannot access PII" is a rule. "GDPR Article 5(1)(f) requires appropriate security of personal data" is the requirement. The link between them must be explicit and queryable.
-
-### 6. Design for Query, Not Just Storage
-The schema must support the governance intelligence queries that Layer 2 will run:
-- "Which agents have overlapping write access to the same resource?"
-- "Are there segregation of duties violations — agents that can both initiate and approve the same action?"
-- "Which resources have no governance rules attached?"
-- "What is the blast radius if this agent is compromised — what can it transitively reach?"
-- "Show me every permission grant that traces back to GDPR compliance."
-- "Which agents have unrestricted access to any resource type?"
-
-Indexes, views, and materialized views should be planned with these queries in mind.
-
-## Data Model — Domain Entities
-
-The following entities must be modeled. For each entity, think carefully about: what are its attributes, what are its relationships to other entities, what constraints enforce correctness, and what queries will need to be efficient.
-
-### Core Entities
-
-#### Agents
-An AI agent that is governed by this system.
-- Identity: unique ID, human-readable name, version/revision
-- Purpose: declared mission/description of what this agent is supposed to do
-- Lifecycle state: proposed → under_review → approved → active → suspended → decommissioned
-- Agent type: orchestrator, worker, autonomous, human-in-the-loop
-- Reporting chain: which agent or human this agent reports to (self-referential FK for agent hierarchies, nullable for top-level agents)
-- Delegation scope: what this agent is allowed to delegate to sub-agents
-- Product/service affiliation: which product or deployment this agent belongs to
-- Metadata: creation date, last review date, review cycle interval, owner (human), contact
-
-#### Resources
-Anything an agent can interact with — the I/O surface.
-- Identity: unique ID, human-readable name, description
-- Resource type: database, table, column, api_endpoint, webhook, file_store, mcp_server, external_service, queue, secret_store, model_endpoint
-- Sensitivity classification: public, internal, confidential, restricted, critical
-- Data categories (many-to-many): PII, PHI, financial, intellectual_property, authentication_credential, system_configuration, audit_data, customer_data, employee_data
-- Directionality: read, write, create, delete, execute, admin (a resource can support multiple)
-- Location/endpoint: URI, connection string, or path that identifies this resource
-- Owner: team or individual responsible for this resource
-- Product/service affiliation: which system this resource belongs to
-
-#### Tools
-Specific capabilities exposed through MCP or other interfaces. Tools are the actual enforcement boundary — agents access resources THROUGH tools.
-- Identity: unique ID, human-readable name, description
-- MCP server: which MCP server exposes this tool (nullable for non-MCP tools)
-- Tool type: mcp_tool, api_call, database_query, file_operation, webhook_trigger, custom
-- Parameters: JSON schema of accepted parameters
-- Resources accessed: which resources this tool reads from or writes to (many-to-many with directionality)
-- Risk profile: what is the worst-case impact of unrestricted use of this tool
-- Idempotency: is this tool safe to retry, or is it destructive/non-reversible
-
-#### Roles
-Named collections of permissions that can be assigned to agents.
-- Identity: unique ID, human-readable name, description
-- Role hierarchy: roles can inherit from parent roles (self-referential FK)
-- Scope: global, product-level, agent-level
-- Built-in flag: is this a system-defined role or a custom role
-- Max assignment count: optional limit on how many agents can hold this role simultaneously
-
-#### Permissions
-The link between roles and what they're allowed to do. A permission grants a specific action on a specific resource (optionally through a specific tool).
-- Role FK: which role this permission belongs to
-- Resource FK: which resource this permission applies to
-- Tool FK: optionally, which tool this permission is scoped to (null = any tool that accesses the resource)
-- Actions: array of allowed actions (read, write, create, delete, execute, approve, delegate)
-- Conditions: optional JSON conditions for ABAC-style rules (time windows, IP ranges, tenant scopes, request rate limits, requires_approval_above_threshold)
-- Grant type: allow, deny (explicit deny overrides allow)
-- Expiration: optional timestamp for time-bounded permissions
-
-#### Agent-Role Assignments
-The binding of agents to roles.
-- Agent FK
-- Role FK
-- Assigned by: who granted this (human or system)
-- Assigned at: timestamp
-- Reason: why this assignment was made
-- Expiration: optional
-- Status: active, suspended, expired, revoked
-
-### Governance Entities
-
-#### Rules
-Evaluable governance checks that assess the current state of the permission model.
-- Identity: unique ID, human-readable name, description
-- Rule type: access_control, segregation_of_duties, data_protection, risk_threshold, coverage_requirement, approval_requirement, delegation_constraint
-- Condition: a structured representation of what this rule checks (JSON or DSL — design this carefully as it's the core of the evaluation engine)
-- Action on violation: deny, flag_for_review, require_approval, alert, log_only
-- Severity: critical, high, medium, low, informational
-- Status: draft, active, disabled, deprecated
-- Scope: global, product-level, agent-level, resource-level
-
-#### Rule Sets
-Composable collections of rules that can be applied at different scopes.
-- Identity: unique ID, name, description
-- Rules: many-to-many with rules
-- Scope binding: what this rule set is applied to (global, a specific product, a specific agent class)
-- Compliance framework FK: optional link to the compliance requirement this rule set satisfies
-
-#### Compliance Frameworks
-External requirements that mandate governance rules.
-- Identity: unique ID, name, version, description
-- Framework type: regulation (GDPR, EU AI Act), standard (SOC 2, ISO 27001), internal_policy, contractual_obligation
-- Requirements: one-to-many child records, each a specific requirement within the framework
-- Effective date, review date
-
-#### Compliance Requirements
-Specific requirements within a compliance framework.
-- Identity: unique ID, reference code (e.g., "GDPR Art. 5(1)(f)"), description
-- Framework FK
-- Rules: many-to-many with rules (which rules satisfy this requirement)
-- Status: met, partially_met, not_met, not_applicable
-
-#### Segregation of Duties (SoD) Constraints
-First-class declarations that certain permission combinations must not coexist.
-- Identity: unique ID, name, description
-- Constraint type: same_agent (no single agent may hold both), same_role (no single role may contain both), same_hierarchy (no agent chain may hold both)
-- Permission set A: one side of the constraint (FKs to permissions or abstract permission patterns)
-- Permission set B: the other side
-- Severity: critical, high, medium, low
-- Compliance requirement FK: why this constraint exists
-
-### Operational Entities
-
-#### Products / Deployments
-Logical grouping of agents, resources, and rules by product or service.
-- Identity: unique ID, name, description
-- Owner: team or individual
-- Agents: one-to-many
-- Resources: one-to-many
-
-#### MCP Servers
-MCP server registrations that expose tools to agents.
-- Identity: unique ID, name, description, endpoint URL
-- Tools: one-to-many
-- Status: active, inactive, deprecated
-- Authentication method: none, api_key, oauth, mTLS
-
-#### Audit Log
-Immutable record of every governance-relevant action.
-- Event ID (UUID), timestamp
-- Actor: who or what performed the action (human user ID, system process, agent ID)
-- Action type: agent_registered, role_created, permission_granted, permission_revoked, rule_created, rule_modified, assignment_created, assignment_revoked, sod_violation_detected, etc.
-- Entity type and entity ID: what was affected
-- Previous state: JSON snapshot of the entity before the change
-- New state: JSON snapshot after
-- Reason: free-text justification
-- Correlation ID: for grouping related audit events
-
-#### Risk Assessments
-Computed risk scores for agents, roles, or permission sets.
-- Entity type and entity ID: what is being assessed
-- Risk score: numeric (define a consistent scale)
-- Risk factors: JSON array of contributing factors
-- Assessed at: timestamp
-- Assessment method: manual, automated, hybrid
-
-## pgpm Module Structure
-
-Actual built layout (note: no `sql/` wrapper — deploy/verify/revert sit directly under the package root, per pgpm convention):
-
-```
-packages/
-  governance-core/
-    package.json                    # @tpsdev/governance-core
-    pgpm.plan                       # 40-entry DAG (deploy order + dependencies)
-    governance-core.control         # requires pgcrypto, uuid-ossp, citext, pg_trgm, btree_gist, plpgsql
-    jest.config.js                  # maxWorkers: 1 (required for DB integration tests)
-    tsconfig.json
-    deploy/
-      schemas/
-        governance/
-          schema.sql
-          types/enums.sql           # 22 enum types
-          tables/
-            products/table.sql
-            mcp_servers/table.sql
-            agents/table.sql
-            resources/table.sql
-            tools/table.sql
-            roles/table.sql
-            permissions/table.sql
-            agent_role_assignments/table.sql
-            resource_data_categories/table.sql
-            tool_resources/table.sql
-            compliance_frameworks/table.sql
-            compliance_requirements/table.sql
-            rules/table.sql
-            rule_sets/table.sql
-            rule_set_rules/table.sql
-            rule_compliance_reqs/table.sql
-            sod_constraints/table.sql
-            sod_constraint_permissions/table.sql
-            audit_log/table.sql
-            risk_assessments/table.sql
-            agents/policies/enable_rls.sql
-            agents/policies/access_policies.sql
-            audit_log/policies/enable_rls.sql
-            audit_log/policies/access_policies.sql
-          functions/
-            effective_permissions.sql
-            sod_check.sql
-            blast_radius.sql
-            permission_overlap.sql
-            coverage_gaps.sql
-            attach_audit_triggers.sql
-          views/
-            agent_topology.sql
-            agent_summary.sql
-            resource_exposure.sql
-            sod_violations.sql
-            ungoverned_resources.sql
-          indexes/performance_indexes.sql
-        governance_private/
-          schema.sql
-          functions/audit_trigger.sql  # SECURITY DEFINER trigger function
-    verify/                         # mirrors deploy/ — uses verify_* helper functions
-    revert/                         # mirrors deploy/ — DROP/ALTER to undo each change
-    seed/
-      reference_data.sql            # 4 frameworks, 15 requirements, 5 roles, 4 SoD templates
-    __tests__/
-      basic.test.ts
-      schema.test.ts
-      agents.test.ts
-      audit_trail.test.ts
-      role_hierarchy.test.ts
-      effective_permissions.test.ts
-      sod_violations.test.ts
-      blast_radius.test.ts
+```json
+{
+  "framework": "Next.js 15 (App Router)",
+  "react": "React 19",
+  "styling": "Tailwind CSS 4",
+  "components": "shadcn/ui (customized to terminal theme)",
+  "state": "React Server Components for data fetching, client components for interactivity",
+  "database": "@tpsdev/governance-engine (TpsClient)",
+  "charts": "Recharts (for dashboard metrics)",
+  "graphs": "React Flow (for topology view)",
+  "tables": "@tanstack/react-table (for agent registry, audit log, resource explorer)",
+  "icons": "Lucide React",
+  "dates": "date-fns",
+  "yaml": "yaml (for Sanna export preview)",
+  "testing": "Vitest + React Testing Library + Playwright (e2e)"
+}
 ```
 
-## SQL Conventions
+**No additional backend or API layer.** Next.js Server Components and Server Actions call `TpsClient` directly. The TPS client is instantiated in a server-side singleton and reused across requests.
 
-- All tables live in the `governance` schema (not `public`)
-- Use `uuid` primary keys generated by `gen_random_uuid()`
-- Use `timestamptz` for all timestamps, defaulting to `now()`
-- Use `text` for string fields unless there's a specific reason for `varchar(n)`
-- Use PostgreSQL `enum` types for fixed taxonomies (agent lifecycle states, severity levels, resource types, etc.)
-- Use `jsonb` for flexible/extensible metadata fields (conditions, parameters, risk factors)
-- Name constraints explicitly (e.g., `fk_permissions_role`, `chk_agents_lifecycle_state`)
-- Add `COMMENT ON TABLE` and `COMMENT ON COLUMN` for every table and non-obvious column
-- Every mutable table gets the audit trigger attached
-- Foreign keys should specify `ON DELETE` behavior explicitly (usually `RESTRICT` for governance data — you should not be able to silently delete a role that has active assignments)
+## Design System — Terminal-Inspired Governance UI
 
-## Seed / Reference Data
+### Philosophy
 
-The module should ship with sensible default reference data:
+KYA should feel like a **mission control terminal** — not a consumer SaaS dashboard. The target audience is security engineers, governance operators, and compliance teams. They value information density, keyboard navigation, and zero ambiguity over visual polish or whitespace. Think Bloomberg Terminal meets Linear meets htop.
 
-- **Data categories:** PII, PHI, financial, intellectual_property, authentication_credential, system_configuration, audit_data, customer_data, employee_data
-- **Compliance frameworks:** GDPR (with key articles as requirements), EU AI Act (key articles), SOC 2 (relevant trust service criteria), a template "Internal Policy" framework
-- **Built-in roles:** system_admin, governance_admin, agent_operator, auditor, read_only_observer
-- **Risk scale:** 1-5 (negligible, low, moderate, high, critical) with descriptions
-- **SoD templates:** Common segregation of duties patterns (initiator/approver, data accessor/data deleter, config modifier/config deployer)
+### Visual Identity
 
-## Testing Requirements
+**Color palette:**
 
-Write tests using `pgsql-test` (the Constructive testing framework). Tests must cover:
+```css
+:root {
+  /* Backgrounds */
+  --kya-bg-primary: #0a0a0f;        /* Near-black, slight blue undertone */
+  --kya-bg-secondary: #12121a;      /* Panels, cards */
+  --kya-bg-tertiary: #1a1a25;       /* Elevated surfaces, hover states */
+  --kya-bg-surface: #22222f;        /* Input fields, table rows on hover */
 
-1. **Schema integrity:** All tables, columns, constraints, and indexes exist after deploy
-2. **Referential integrity:** Foreign keys prevent orphaned records; ON DELETE RESTRICT works
-3. **Audit trail:** Every INSERT, UPDATE, DELETE on governed tables creates an audit_log entry
-4. **Role hierarchy resolution:** The `effective_permissions` function correctly resolves permissions through multi-level role inheritance
-5. **SoD detection:** The `sod_check` function correctly identifies violations when conflicting permissions are assigned
-6. **Blast radius computation:** The `blast_radius` function correctly traces transitive access through tool → resource relationships
-7. **Permission overlap detection:** The `permission_overlap` function correctly identifies agents with overlapping access
-8. **Coverage gap detection:** The `coverage_gaps` function correctly identifies ungoverned resources
-9. **RLS policies:** Row-level security correctly scopes access based on the governance model's own access controls
-10. **Revert safety:** Every deploy can be cleanly reverted, and verify scripts fail after revert
+  /* Text */
+  --kya-text-primary: #e0e0e8;      /* Primary content */
+  --kya-text-secondary: #8888a0;    /* Labels, descriptions, metadata */
+  --kya-text-muted: #555568;        /* Disabled, timestamps */
 
-## Design Decisions
+  /* Accent — green phosphor terminal feel */
+  --kya-accent-primary: #00ff88;    /* Primary actions, active states */
+  --kya-accent-secondary: #00cc6a;  /* Hover on primary accent */
+  --kya-accent-dim: #00ff8822;      /* Accent backgrounds, glows */
 
-All design decisions are documented in `DECISIONS.md` (D001–D024). Key ones:
+  /* Status / Severity */
+  --kya-status-critical: #ff3344;   /* Critical risk, SoD violations, deny */
+  --kya-status-high: #ff8800;       /* High risk, warnings */
+  --kya-status-medium: #ffcc00;     /* Medium risk, review overdue */
+  --kya-status-low: #00cc6a;        /* Low risk, healthy */
+  --kya-status-info: #4488ff;       /* Informational, neutral */
 
-- **D001** — Rule conditions stored as `jsonb` with `"type"` discriminant (not DSL, not stored PG expressions)
-- **D002** — Deny-override model: explicit deny grants override allow at same resource+action
-- **D003** — Role hierarchy depth capped at 20 in recursive CTEs
-- **D004** — Temporal modeling via `expires_at` + append-only audit log (no event sourcing or temporal tables)
-- **D005** — Single-tenant; multi-org isolation is deployment-level (separate databases)
-- **D006** — SoD constraints use junction table with `side='a'|'b'` (not UUID arrays)
-- **D007** — RLS controlled by `current_setting('tps.role')` session variable (not database roles)
-- **D008** — Audit log is append-only; no UPDATE/DELETE policies; trigger is SECURITY DEFINER
-- **D009** — `coverage_gaps()` flags resources missing EITHER permissions OR resource-scoped rules
+  /* Lifecycle states */
+  --kya-state-proposed: #8888a0;
+  --kya-state-under-review: #ffcc00;
+  --kya-state-approved: #4488ff;
+  --kya-state-active: #00ff88;
+  --kya-state-suspended: #ff8800;
+  --kya-state-decommissioned: #555568;
 
-See DECISIONS.md for D010–D024 covering type choices, schema split, GIN indexes, function language selection, and more.
+  /* Borders */
+  --kya-border-default: #2a2a38;
+  --kya-border-focus: #00ff88;
+}
+```
+
+**Typography:**
+
+```css
+:root {
+  --kya-font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', monospace;
+  --kya-font-sans: 'Inter', -apple-system, sans-serif;
+  
+  --kya-text-xs: 0.6875rem;    /* 11px — timestamps, IDs */
+  --kya-text-sm: 0.75rem;      /* 12px — table cells, metadata */
+  --kya-text-base: 0.8125rem;  /* 13px — body text */
+  --kya-text-lg: 0.9375rem;    /* 15px — section headers */
+  --kya-text-xl: 1.125rem;     /* 18px — page titles */
+}
+```
+
+All data content (names, values, IDs, code) uses the monospace font. Labels and descriptions use sans-serif. This creates a clear visual hierarchy between "data" and "chrome."
+
+**Layout principles:**
+- **No whitespace waste.** Every pixel carries information or breathing room, not filler.
+- **Dense by default.** Tables show 20+ rows without scrolling. Cards pack multiple data points into compact layouts.
+- **Grid-based.** The main layout is a sidebar + content area. The content area uses CSS Grid for multi-panel layouts.
+- **Dark everywhere.** No light mode. This is an ops tool.
+- **Keyboard first.** Every action reachable via keyboard. `⌘K` command palette for global navigation. Arrow keys for table navigation. `Enter` to drill into an entity. `Esc` to go back.
+
+**Component styling overrides for shadcn/ui:**
+- Buttons: small, compact, monospace labels, accent green for primary actions, ghost style for secondary
+- Tables: no alternating row colors; subtle border between rows; hover highlights entire row with `--kya-bg-tertiary`
+- Badges/pills: small, uppercase monospace, colored by status/severity
+- Cards: no rounded corners (or very slight, 2px max); thin border; no shadow
+- Inputs: monospace, dark background, accent border on focus
+- Dialogs: centered, dark, no backdrop blur (blur is consumer UI energy)
+- Tooltips: fast (100ms delay), monospace, dark
+
+### Iconography
+
+Use Lucide icons throughout. Size: 14px–16px. Color: `--kya-text-secondary` by default, `--kya-accent-primary` for active/interactive elements.
+
+### Motion
+
+Minimal. No page transitions, no slide-in panels, no bouncing. Only:
+- Instant opacity transitions on hover (100ms)
+- Height transitions on expand/collapse (150ms, ease-out)
+- Loading skeletons (pulse animation) for data fetching states
+
+---
+
+## Application Structure
+
+```
+app/
+├── layout.tsx                    # Root layout: sidebar + main content area
+├── page.tsx                      # Redirect to /agents
+│
+├── agents/
+│   ├── page.tsx                  # Agent Registry (table view)
+│   └── [id]/
+│       ├── page.tsx              # KYA Card — agent detail
+│       ├── permissions/
+│       │   └── page.tsx          # Net effective permissions detail
+│       ├── tools/
+│       │   └── page.tsx          # Tool inventory detail
+│       ├── blast-radius/
+│       │   └── page.tsx          # Blast radius visualization
+│       └── audit/
+│           └── page.tsx          # Audit timeline filtered to this agent
+│
+├── audit/
+│   └── page.tsx                  # Global audit timeline
+│
+├── topology/
+│   └── page.tsx                  # Agent hierarchy graph (Phase 2)
+│
+├── dashboard/
+│   └── page.tsx                  # Governance dashboard (Phase 3)
+│
+├── resources/
+│   └── page.tsx                  # Resource explorer (Phase 2)
+│
+├── rules/
+│   └── page.tsx                  # Rule management (Phase 2)
+│
+├── compliance/
+│   └── page.tsx                  # Compliance reports (Phase 3)
+│
+└── api/
+    └── tps/
+        └── route.ts              # Optional: thin API route for client-side fetches
+```
+
+---
+
+## Build Phases
+
+### Phase 1 — Core Agent Views + Audit Timeline (BUILD THIS FIRST)
+
+This is the minimum viable KYA. An operator can see all agents, drill into any agent, understand its full permission and tool profile, and review the audit history.
+
+#### 1A: Application Shell
+
+**Root Layout (`app/layout.tsx`)**
+
+The layout is a fixed sidebar + scrollable content area:
+
+```
+┌──────────────────────────────────────────────────────┐
+│  TPS                                          ⌘K    │
+├────────┬─────────────────────────────────────────────┤
+│        │                                             │
+│ AGENTS │  [content area]                             │
+│ AUDIT  │                                             │
+│        │                                             │
+│ ────── │                                             │
+│        │                                             │
+│ TOPO   │                                             │
+│ RULES  │                                             │
+│ DASH   │                                             │
+│ COMPLY │                                             │
+│        │                                             │
+│ ────── │                                             │
+│        │                                             │
+│ v0.1.0 │                                             │
+│        │                                             │
+└────────┴─────────────────────────────────────────────┘
+```
+
+Sidebar: fixed width (200px), monospace labels, icons from Lucide. Active page highlighted with accent. Phase 2/3 items shown but dimmed/disabled with "(soon)" label. Bottom: version number and connection status indicator (green dot = connected to DB, red = disconnected).
+
+**Command Palette (`⌘K`)**
+
+A modal search/command palette (use shadcn/ui `CommandDialog` or build from `cmdk`). Supports:
+- Jump to any agent by name: type "payment" → shows "payment-processor" agent
+- Jump to any page: "audit", "topology", "dashboard"
+- Quick actions: "new agent", "new rule", "export constitution"
+- Search across agents, resources, tools, rules by name
+
+**TPS Client singleton:**
+
+```typescript
+// lib/tps.ts
+import { TpsClient } from '@tpsdev/governance-engine';
+
+let client: TpsClient | null = null;
+
+export function getTpsClient(): TpsClient {
+  if (!client) {
+    client = new TpsClient({
+      connection: {
+        host: process.env.TPS_DB_HOST!,
+        port: Number(process.env.TPS_DB_PORT!),
+        database: process.env.TPS_DB_NAME!,
+        username: process.env.TPS_DB_USER!,
+        password: process.env.TPS_DB_PASSWORD!,
+      },
+    });
+  }
+  return client;
+}
+
+// Default context for server-side operations
+// In production, this would come from the authenticated user's session
+export function getDefaultContext(): TpsContext {
+  return {
+    actor: process.env.TPS_DEFAULT_ACTOR || 'kya-system',
+    role: (process.env.TPS_DEFAULT_ROLE || 'governance_admin') as TpsRole,
+  };
+}
+```
+
+#### 1B: Agent Registry (`/agents`)
+
+**The home screen.** A full-width table of all agents in the system.
+
+**Columns:**
+| Column | Source | Display |
+|---|---|---|
+| Status | `lifecycle_state` | Colored dot + label |
+| Name | `name` | Monospace, clickable → `/agents/[id]` |
+| Type | `agent_type` | Badge (orchestrator, worker, autonomous, HITL) |
+| Product | `product.name` | Text, dimmed if null |
+| Parent | `parent_agent.name` | Text, dimmed if top-level |
+| Roles | count of active assignments | Number |
+| Risk | latest `risk_assessment.risk_level` | Colored badge (critical=red, high=orange, etc.) |
+| Review | `last_review_at` + `review_cycle_days` | "OK" (green) or "Overdue" (yellow) or "No cycle" (dimmed) |
+| Created | `created_at` | Relative time ("3d ago") |
+
+**Features:**
+- **Filter bar** at the top: lifecycle state (multi-select chips), agent type, product, risk level, review status
+- **Search**: real-time filter on name and purpose
+- **Sort**: click column headers to sort (default: risk desc, then name asc)
+- **Pagination**: cursor-based, 50 rows per page, "Load more" button (no page numbers)
+- **Keyboard**: arrow keys to navigate rows, Enter to open agent detail, `/` to focus search
+- **Bulk count**: "Showing 47 agents" badge in the filter bar
+
+**Data fetching:**
+Server Component. Call `tps.agents.list(ctx, { limit: 50, ...filters })` in the page component. Filters come from URL search params so the page is shareable/bookmarkable.
+
+#### 1C: KYA Card — Agent Detail (`/agents/[id]`)
+
+**The core of the product.** When you click an agent, you see everything about it.
+
+**Layout: a two-column grid with stacked sections:**
+
+```
+┌──────────────────────────────────────────────────────┐
+│  ← Back to Agents          payment-processor    ●ACT │
+├──────────────────────────────┬───────────────────────┤
+│                              │                       │
+│  IDENTITY                    │  RISK                 │
+│  Name: payment-processor     │  Score: 4 (HIGH)      │
+│  Type: worker                │  ┌─────────────────┐  │
+│  Purpose: Process customer   │  │ pii_data_access  │  │
+│    payments via Stripe       │  │ destructive_tool │  │
+│  Owner: payments-team        │  │ sod_violation    │  │
+│  Product: payments           │  └─────────────────┘  │
+│  State: active               │                       │
+│  Review: 12d ago (OK)        │  SOD VIOLATIONS       │
+│                              │  ⚠ Initiate-Approve   │
+│  HIERARCHY                   │    Separation          │
+│  Reports to: orchestrator-1  │                       │
+│  Sub-agents: none            │                       │
+│                              │                       │
+├──────────────────────────────┴───────────────────────┤
+│                                                      │
+│  TOOLS (6)                                    → View │
+│  ┌────────────────────┬──────┬────────┬───────────┐  │
+│  │ Name               │ Type │ Server │ Destruct? │  │
+│  ├────────────────────┼──────┼────────┼───────────┤  │
+│  │ stripe_charge      │ MCP  │ stripe │ No        │  │
+│  │ stripe_refund      │ MCP  │ stripe │ Yes  ●    │  │
+│  │ db_read_customers  │ DB   │ —      │ No        │  │
+│  │ db_write_orders    │ DB   │ —      │ No        │  │
+│  │ email_send         │ API  │ —      │ No        │  │
+│  │ file_upload_receipt│ File │ —      │ No        │  │
+│  └────────────────────┴──────┴────────┴───────────┘  │
+│                                                      │
+├──────────────────────────────────────────────────────┤
+│                                                      │
+│  NET PERMISSIONS (14)                         → View │
+│  ┌──────────────────┬──────────┬────────┬─────────┐  │
+│  │ Resource          │ Actions  │ Grant  │ Via     │  │
+│  ├──────────────────┼──────────┼────────┼─────────┤  │
+│  │ customers_table   │ read     │ ALLOW  │ reader  │  │
+│  │ orders_table      │ read,wrt │ ALLOW  │ writer  │  │
+│  │ pii_columns       │ read     │ DENY ● │ sec-pol │  │
+│  │ stripe_api        │ execute  │ ALLOW  │ stripe  │  │
+│  └──────────────────┴──────────┴────────┴─────────┘  │
+│                                                      │
+├──────────────────────────────────────────────────────┤
+│                                                      │
+│  BLAST RADIUS (8 resources)                   → View │
+│  ■■■■■□□ critical(0) restricted(1) confid(2)         │
+│          internal(3) public(2)                       │
+│                                                      │
+├──────────────────────────────────────────────────────┤
+│                                                      │
+│  COMPLIANCE                                          │
+│  GDPR: 4/5 met  EU AI Act: 3/5 met  SOC2: 5/5 met  │
+│                                                      │
+├──────────────────────────────────────────────────────┤
+│                                                      │
+│  RECENT AUDIT (last 10)                       → All  │
+│  27 Apr 14:32  alice@  permission_granted  orders    │
+│  27 Apr 14:30  alice@  role_assigned       writer    │
+│  27 Apr 13:15  system  agent_approved      —         │
+│  ...                                                 │
+│                                                      │
+└──────────────────────────────────────────────────────┘
+```
+
+**Data fetching for this page (all via TpsClient):**
+
+```typescript
+// app/agents/[id]/page.tsx — Server Component
+const tps = getTpsClient();
+const ctx = getDefaultContext();
+
+const [
+  agent,
+  netPerms,
+  tools,
+  blastRadius,
+  sodViolations,
+  riskAssessment,
+  recentAudit,
+  compliance,
+] = await Promise.all([
+  tps.agents.get(ctx, params.id),
+  tps.intelligence.netEffectivePermissions(ctx, params.id),
+  tps.intelligence.toolInventory(ctx, params.id),
+  tps.intelligence.blastRadius(ctx, params.id),
+  tps.intelligence.sodCheck(ctx, params.id),
+  tps.riskAssessments.latest(ctx, { entity_type: 'governance.agents', entity_id: params.id }),
+  tps.audit.list(ctx, { entity_type: 'governance.agents', entity_id: params.id, limit: 10 }),
+  tps.rules.complianceCheck(ctx, { agentId: params.id }),
+]);
+```
+
+All eight calls run in parallel via `Promise.all`. Each section of the KYA Card renders from one of these results.
+
+**Sections detail:**
+
+**Identity panel:** Static display of agent fields. Lifecycle state shown as a colored badge. Review status computed from `last_review_at` + `review_cycle_days` vs. now. Link to edit (opens a modal form with `tps.agents.update`).
+
+**Risk panel:** The latest risk assessment. Risk score as a large colored number. Below it, a list of contributing risk factors (from `risk_factors` jsonb). Each factor is a row with the factor name and its weight.
+
+**SoD Violations panel:** Only shown if violations exist. Each violation shows the constraint name, severity badge, and the conflicting permission names. Click to see full detail.
+
+**Tools table:** First 6 rows from `agent_tool_inventory`. Shows tool name, type badge, MCP server name (or "—"), destructive flag (red dot if true). "→ View" link goes to `/agents/[id]/tools` for the full list.
+
+**Net Permissions table:** First 8 rows from `netEffectivePermissions`. Shows resource name, net actions as comma-separated badges, grant type (ALLOW in green, DENY in red), and the granting role name. "→ View" link goes to `/agents/[id]/permissions` for the full list with lineage detail.
+
+**Blast Radius summary:** A compact horizontal bar showing resource counts by sensitivity classification. Each segment is colored by sensitivity (critical=red, restricted=orange, confidential=yellow, internal=blue, public=gray). Shows total resource count. "→ View" link goes to `/agents/[id]/blast-radius` for the full list.
+
+**Compliance summary:** One-line-per-framework showing "X/Y met" with a progress indicator. Only shows frameworks that have rules linked to this agent or its product.
+
+**Recent Audit:** Last 10 audit events for this agent. Each row: timestamp (relative), actor, action type, affected entity. "→ All" link goes to `/agents/[id]/audit`.
+
+**Actions bar (top right of KYA Card):**
+- "Export Constitution" button → calls `tps.export.toSannaConstitution(ctx, id)`, shows YAML in a modal with copy-to-clipboard
+- "Run Risk Assessment" button → calls `tps.intelligence.computeRiskScore(ctx, id)`, refreshes the risk panel
+- "Evaluate Rules" button → calls `tps.rules.evaluate(ctx, id)`, shows results in a modal
+- Lifecycle state transition buttons: contextual based on current state (e.g., "Approve" if `under_review`, "Suspend" if `active`)
+
+#### 1D: Agent Sub-Pages
+
+**`/agents/[id]/permissions`** — Full net effective permissions table with all columns from `NetPermission` type. Shows the grant lineage (which role at which depth granted or denied each action). Filterable by resource type, sensitivity, grant type. Expandable rows that show the individual permission records that composed into the net result.
+
+**`/agents/[id]/tools`** — Full tool inventory table with all columns from `agent_tool_inventory`. Shows resource count per tool, effective actions per tool, MCP server details. Expandable rows showing the resources each tool accesses (from `tool_resources`).
+
+**`/agents/[id]/blast-radius`** — Full blast radius table sorted by sensitivity descending. Shows every resource the agent can reach, how it reaches it (direct permission vs. via tool), and the effective actions. Color-coded rows by sensitivity. This is the "if this agent is compromised, here's the damage" view.
+
+**`/agents/[id]/audit`** — Filtered audit timeline showing only events for this agent and its related entities (permissions, assignments, roles). Same component as the global audit timeline but pre-filtered.
+
+#### 1E: Audit Timeline (`/audit`)
+
+**A searchable, filterable, real-time log of every governance event.**
+
+**Layout:**
+
+```
+┌──────────────────────────────────────────────────────┐
+│  Audit Timeline                                      │
+├──────────────────────────────────────────────────────┤
+│  Filters: [Entity Type ▾] [Action Type ▾] [Actor ▾] │
+│           [Date Range: _____ to _____]  [Search___]  │
+├──────────────────────────────────────────────────────┤
+│                                                      │
+│  TODAY                                               │
+│  14:32:01  alice@example.com                         │
+│  permission_granted on governance.permissions        │
+│  Entity: perm-uuid-1234                              │
+│  + { role_id: "...", resource_id: "...",             │
+│      actions: ["read", "write"], grant_type: "allow" │ 
+│    }                                                 │
+│  ────────────────────────────────────────────────     │
+│  14:30:45  alice@example.com                         │
+│  role_assigned on governance.agent_role_assignments   │
+│  Entity: assign-uuid-5678                            │
+│  + { agent_id: "...", role_id: "...",                │
+│      status: "active" }                              │
+│  ────────────────────────────────────────────────     │
+│  13:15:22  system                                    │
+│  agent_approved on governance.agents                 │
+│  Entity: agent-uuid-9012                             │
+│  Δ lifecycle_state: "under_review" → "approved"      │
+│                                                      │
+│  YESTERDAY                                           │
+│  ...                                                 │
+│                                                      │
+│  [Load more]                                         │
+└──────────────────────────────────────────────────────┘
+```
+
+**Features:**
+
+- **Grouped by day** with date headers
+- **Each event shows:** timestamp (HH:MM:SS), actor, action type (as a colored badge), entity type, entity ID (truncated, click to copy full UUID)
+- **State diff:** For UPDATE events, show the changed fields as `field: old → new` (compare `previous_state` and `new_state` JSON). For INSERT, show `+ new_state`. For DELETE, show `- previous_state`.
+- **Expand/collapse:** Events are collapsed by default (one line per event). Click to expand and see the full state diff.
+- **Filters:** Entity type dropdown (agents, permissions, roles, etc.), action type dropdown (from `audit_action_type` enum), actor text search, date range picker
+- **Search:** Free-text search across actor, entity type, and reason fields
+- **Point-in-time:** A "Reconstruct at..." button that opens a date/time picker. Selecting a timestamp calls `tps.audit.reconstructState(ctx, { entity_type, entity_id, as_of })` and shows the reconstructed state in a modal.
+- **Pagination:** Cursor-based, 50 events per page, "Load more" at bottom
+- **URL params:** All filters encoded in URL search params for shareability
+
+**Data fetching:**
+
+```typescript
+// Server Component with URL search params
+const events = await tps.audit.list(ctx, {
+  entity_type: searchParams.entity_type,
+  action_type: searchParams.action_type,
+  actor: searchParams.actor,
+  from: searchParams.from ? new Date(searchParams.from) : undefined,
+  to: searchParams.to ? new Date(searchParams.to) : undefined,
+  limit: 50,
+  cursor: searchParams.cursor,
+});
+```
+
+---
+
+### Phase 2 — Topology View + Resource Explorer + Rule Management
+
+**Build after Phase 1 is stable and tested.**
+
+#### Topology View (`/topology`)
+
+Uses **React Flow** to render the agent hierarchy as an interactive directed graph.
+
+- Nodes: agents, styled by lifecycle state and risk level
+- Edges: parent → child relationships (from `parent_agent_id`)
+- Node content: agent name, type icon, risk score badge, tool count
+- Click node → navigate to `/agents/[id]`
+- Filter by product (show only agents in one product)
+- Layout algorithm: hierarchical top-to-bottom (Dagre or ELK)
+- Mini-map in corner for large hierarchies
+- Data: `tps.agents.list(ctx, {})` + build adjacency from `parent_agent_id`; enrich with `agent_summary` view data
+
+#### Resource Explorer (`/resources`)
+
+A table of all resources with governance metadata:
+- Columns: name, type, sensitivity, data categories, active agent count, has_delete_grant, has_admin_grant
+- Click a resource → side panel showing `permission_overlap` results (which agents can access it)
+- Filter by resource type, sensitivity, data category, product
+- "Ungoverned" filter toggle → shows only resources from `coverage_gaps()`
+- Data: `tps.resources.list(ctx, filters)` + `resource_exposure` view
+
+#### Rule Management (`/rules`)
+
+A table of all governance rules with status, type, severity, scope, linked compliance requirements.
+- Create new rule: form that builds the JSON condition (with a dropdown for condition type and dynamic fields per type from `RULE-CONDITIONS.md`)
+- Enable/disable rules: toggle with confirmation
+- Evaluate rules: "Run" button per rule that calls the evaluator and shows pass/fail
+- Link rules to compliance requirements
+- Data: `tps.rules.list(ctx)` + CRUD operations
+
+---
+
+### Phase 3 — Governance Dashboard + Compliance Reports
+
+**Build after Phase 2.**
+
+#### Governance Dashboard (`/dashboard`)
+
+A single-screen overview with metric panels:
+
+- **SoD Violations:** count badge + list from `sod_violations` view. Click → drills to the agent with the violation.
+- **Ungoverned Resources:** count + list from `coverage_gaps()`. Click → drills to the resource.
+- **Risk Distribution:** horizontal bar chart showing agent count per risk level (negligible through critical).
+- **Review Status:** count of agents overdue for review vs. on schedule.
+- **Compliance Coverage:** one row per framework showing "X/Y requirements met" with a progress bar.
+- **Recent Activity:** last 5 audit events (compact, same component as audit timeline but minimal).
+
+All data from `TpsClient` intelligence methods + views.
+
+#### Compliance Reports (`/compliance`)
+
+- Select a framework → run `tps.rules.complianceCheck(ctx, { framework })` → show structured report
+- Per-requirement breakdown: requirement reference code, description, linked rules, evaluation results
+- Export as markdown or PDF (stretch goal)
+
+---
+
+## Server-Side Patterns
+
+### TPS Client Context from Session
+
+In Phase 1, use a hardcoded default context (from env vars). This is acceptable for a single-operator tool. For multi-user deployments (Phase 3+), the context should come from the authenticated user's session:
+
+```typescript
+// Future pattern — when auth is added
+import { auth } from '@/lib/auth';
+
+async function getTpsContext(): Promise<TpsContext> {
+  const session = await auth();
+  return {
+    actor: session.user.email,
+    role: session.user.tpsRole, // mapped from your auth system's roles
+  };
+}
+```
+
+### Server Actions for Mutations
+
+All write operations use Next.js Server Actions:
+
+```typescript
+// app/agents/[id]/actions.ts
+'use server';
+
+import { getTpsClient, getDefaultContext } from '@/lib/tps';
+import { revalidatePath } from 'next/cache';
+
+export async function approveAgent(agentId: string) {
+  const tps = getTpsClient();
+  const ctx = getDefaultContext();
+  
+  await tps.agents.update(ctx, agentId, { 
+    lifecycle_state: 'approved' 
+  });
+  
+  revalidatePath(`/agents/${agentId}`);
+  revalidatePath('/agents');
+}
+
+export async function exportConstitution(agentId: string) {
+  const tps = getTpsClient();
+  const ctx = getDefaultContext();
+  
+  return tps.export.toSannaConstitution(ctx, agentId);
+}
+```
+
+### Loading States
+
+Use React Suspense boundaries with skeleton components:
+
+```typescript
+// app/agents/[id]/page.tsx
+import { Suspense } from 'react';
+import { AgentDetailSkeleton } from '@/components/skeletons';
+
+export default function AgentPage({ params }) {
+  return (
+    <Suspense fallback={<AgentDetailSkeleton />}>
+      <AgentDetail id={params.id} />
+    </Suspense>
+  );
+}
+```
+
+Skeleton components should match the terminal aesthetic — pulsing `--kya-bg-tertiary` blocks in the shape of the actual content.
+
+---
+
+## Component Library
+
+Build these reusable components (all using the terminal design system):
+
+| Component | Purpose |
+|---|---|
+| `StatusBadge` | Lifecycle state indicator (colored dot + label) |
+| `SeverityBadge` | Risk/severity level badge (colored, uppercase) |
+| `RiskScore` | Large risk score display with color and contributing factors |
+| `DataTable` | Wrapper around @tanstack/react-table with terminal styling |
+| `FilterBar` | Horizontal filter controls with chips, dropdowns, search |
+| `CommandPalette` | ⌘K global search/navigation |
+| `EntityLink` | Clickable link to an entity (agent, resource, tool, etc.) |
+| `JsonDiff` | Side-by-side or inline diff of two JSON objects (for audit events) |
+| `YamlPreview` | Syntax-highlighted YAML display (for Sanna export) |
+| `SensitivityBar` | Horizontal stacked bar showing resource counts by sensitivity |
+| `ComplianceProgress` | Framework compliance progress (X/Y met) |
+| `AuditEvent` | Single audit log entry (expandable) |
+| `KyaCard` | Generic card component with terminal styling |
+| `Breadcrumb` | Navigation breadcrumb (Agents > payment-processor > Permissions) |
+| `EmptyState` | "No data" display with icon and action suggestion |
+| `ConfirmDialog` | Confirmation dialog for destructive actions |
+
+---
+
+## Environment Variables
+
+```env
+# Database connection (same Postgres where governance-core is deployed)
+TPS_DB_HOST=localhost
+TPS_DB_PORT=5432
+TPS_DB_NAME=governance_dev
+TPS_DB_USER=postgres
+TPS_DB_PASSWORD=postgres
+
+# Default context (Phase 1 — no auth)
+TPS_DEFAULT_ACTOR=kya-operator
+TPS_DEFAULT_ROLE=governance_admin
+```
+
+---
 
 ## What NOT to Build (Yet)
 
-- No TypeScript application code — that's Layer 2
-- No Python application code — a Python SDK (`tpsdev` on PyPI) is planned as a parallel Layer 2 client
-- No UI — that's Layer 3
-- No YAML export — that's Layer 2
-- No Sanna integration — that's Layer 2
-- No API endpoints — that's Layer 2
-- No real-time enforcement — Sanna or other tools handle that
-- No LLM/AI evaluation of rules — rules are deterministic, not probabilistic
+- No user authentication / login — Phase 1 is single-operator, context from env vars
+- No multi-tenant organization switching
+- No real-time WebSocket updates (audit events appear on page refresh or navigation)
+- No PDF export of compliance reports
+- No Sanna receipt ingestion or display
+- No agent creation wizard — use simple form modals for now
+- No permission recommendation engine (AI-assisted rule creation is a future product feature)
+- No mobile responsive design — this is a desktop ops tool
 
-Focus exclusively on getting the Postgres schema, functions, views, triggers, tests, and seed data right. The data model is the product at this layer.
-
-## Multi-Language Compatibility
-
-TPS will have both TypeScript (npm) and Python (PyPI) clients consuming this schema. This has implications for Layer 1 design:
-
-- **Keep business logic in Postgres, not in application code.** Functions like `effective_permissions()`, `sod_check()`, and `blast_radius()` live in the database so both TypeScript and Python clients get identical results without reimplementing logic.
-- **Use standard SQL types.** Avoid PostgreSQL-specific type tricks that don't map cleanly to Python's psycopg3 or SQLAlchemy type system. `uuid`, `timestamptz`, `text`, `jsonb`, `boolean`, `integer`, and enum types are all fine.
-- **Document the function signatures clearly.** Every SQL function should have `COMMENT ON FUNCTION` that describes inputs, outputs, and behavior — these comments become the contract that both SDK authors implement against.
-- **Return structured results from functions.** Prefer `RETURNS TABLE(...)` or `RETURNS SETOF` over scalar returns where possible — this maps cleanly to both TypeScript row types and Python dataclasses/Pydantic models.
-
-## Iteration and Refinement
-
-This prompt is designed to be refined as the project evolves. When we learn something new about the domain, discover a missing entity, or need to restructure a relationship — we update this document and add a new migration. The pgpm deploy/verify/revert pattern supports iterative evolution.
-
-Mark any assumptions you make with `-- ASSUMPTION:` comments in the SQL so we can revisit them.
-
-When in doubt about a design decision, prefer:
-- Normalization over denormalization (we can add materialized views later for performance)
-- Explicit over implicit (name everything, constrain everything, document everything)
-- Restrictive over permissive (it's easier to relax constraints than to add them after data exists)
+---
 
 ## Build Status
 
-### Done
-- [x] All 42 deploy SQL files written (`schemas/`, `tables/`, `functions/`, `views/`, `policies/`, `indexes/`)
-- [x] All 42 verify scripts written (mirror deploy structure; use `verify_*` helpers)
-- [x] All 40 revert scripts written (cleanly undo each deploy)
-- [x] `pgpm.plan` — full 40-entry DAG with correct dependency ordering
-- [x] `governance_private.tg_audit_log()` SECURITY DEFINER trigger function
-- [x] `attach_audit_triggers()` — attaches trigger to all 17 mutable tables
-- [x] Six governance intelligence functions: `effective_permissions`, `sod_check`, `blast_radius`, `permission_overlap`, `coverage_gaps`, `agent_tool_inventory`
-- [x] Six views: `agent_topology`, `agent_summary`, `agent_tool_summary`, `resource_exposure`, `sod_violations`, `ungoverned_resources`
-- [x] RLS on `agents` and `audit_log` — four policies each, controlled by `tps.role` session variable
-- [x] Performance indexes including partial indexes for hot-path governance queries
-- [x] Seed data: 4 compliance frameworks, 15 requirements, 5 built-in roles, 4 SoD constraint templates
-- [x] 12 test files covering audit trail, role hierarchy, SoD violations, blast radius, effective permissions, agents, schema integrity, permission_overlap, coverage_gaps, rls_policies, permissions
-- [x] `governance.agent_tool_inventory(agent_id)` function — tool-centric governance intelligence for KYA Layer 3
-- [x] `governance.agent_tool_summary` view — dashboard companion showing tool counts per active/approved agent
-- [x] `docs/ARCHITECTURE.md`, `docs/PGPM-CONVENTIONS.md`, `docs/SANNA-PROTOCOL-NOTES.md`, `docs/DATA-MODEL-REFERENCE.md`
-- [x] `DECISIONS.md` — 25 decisions covering every significant design choice
+### Phase 1 — To Build
+- [ ] Design system: Tailwind config with terminal theme CSS variables
+- [ ] Component library: all 16 components listed above
+- [ ] Application shell: root layout, sidebar, command palette
+- [ ] Agent Registry page (`/agents`)
+- [ ] KYA Card — Agent Detail page (`/agents/[id]`)
+- [ ] Agent sub-pages: permissions, tools, blast-radius, audit
+- [ ] Audit Timeline page (`/audit`)
+- [ ] TPS Client singleton (`lib/tps.ts`)
+- [ ] Server Actions for mutations
+- [ ] Loading skeletons for all pages
+- [ ] Keyboard navigation (table arrows, ⌘K, /, Enter, Esc)
+- [ ] Error boundaries and error states
 
-### Pending (not yet run against a live database)
-- [ ] `pgpm deploy --createdb --database governance_dev` — deploy validation
-- [ ] `pgpm verify --database governance_dev` — all 42 verify scripts pass
-- [ ] `pnpm test` — all test suites pass against deployed schema
-- [ ] `pgpm revert --database governance_dev` — full revert succeeds cleanly
+### Phase 2 — After Phase 1
+- [ ] Topology View (`/topology`) with React Flow
+- [ ] Resource Explorer (`/resources`)
+- [ ] Rule Management (`/rules`)
 
-### Previously missing tests (now written)
-- [x] `__tests__/permission_overlap.test.ts` — `permission_overlap()` function
-- [x] `__tests__/coverage_gaps.test.ts` — `coverage_gaps()` / `ungoverned_resources` view
-- [x] `__tests__/rls_policies.test.ts` — RLS policy configuration and session variable behavior (enforcement requires non-superuser `db` connection or `FORCE ROW LEVEL SECURITY`)
-- [x] `__tests__/permissions.test.ts` — permission grant/deny mechanics, expiration, schema constraints
+### Phase 3 — After Phase 2
+- [ ] Governance Dashboard (`/dashboard`)
+- [ ] Compliance Reports (`/compliance`)
+
+### Documentation — Generate at Session End
+- Update this CLAUDE.md build status
+- Create `docs/COMPONENTS.md` — component API reference
+- Create `docs/DESIGN-SYSTEM.md` — color, typography, spacing reference
